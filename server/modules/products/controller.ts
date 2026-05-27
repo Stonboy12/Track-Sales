@@ -20,12 +20,12 @@ export const productController = {
     return ok(await productService.get(id));
   },
   async create(req: NextRequest) {
-    const session = requireRole(req, "supervisor");
+    const session = requireRole(req, "admin");
     const input = await parseBody(req, productCreateSchema);
     return created(await productService.create(input, { id: session.sub, name: session.name }));
   },
   async update(req: NextRequest, id: string) {
-    const session = requireRole(req, "supervisor");
+    const session = requireRole(req, "admin");
     const patch = await parseBody(req, productUpdateSchema);
     return ok(await productService.update(id, patch, { id: session.sub, name: session.name }));
   },

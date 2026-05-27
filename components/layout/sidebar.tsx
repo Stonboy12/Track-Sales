@@ -4,16 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { navigation } from "@/lib/navigation";
+import { navigationFor } from "@/lib/navigation";
 import { Badge } from "@/components/ui/badge";
+import type { Role } from "@/server/db/types";
 
 interface SidebarProps {
   className?: string;
   onNavigate?: () => void;
+  role?: Role;
 }
 
-export function Sidebar({ className, onNavigate }: SidebarProps) {
+export function Sidebar({ className, onNavigate, role }: SidebarProps) {
   const pathname = usePathname();
+  const groups = navigationFor(role);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -31,13 +34,15 @@ export function Sidebar({ className, onNavigate }: SidebarProps) {
         </div>
         <div className="leading-tight">
           <p className="text-sm font-semibold">FMCG Sales OS</p>
-          <p className="text-xs text-muted-foreground">Field Sales Workspace</p>
+          <p className="text-xs text-muted-foreground capitalize">
+            {role ? `${role} workspace` : "Field Sales Workspace"}
+          </p>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 scrollbar-thin">
         <div className="space-y-5">
-          {navigation.map((group) => (
+          {groups.map((group) => (
             <div key={group.label}>
               <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 {group.label}

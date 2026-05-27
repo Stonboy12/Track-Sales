@@ -104,10 +104,14 @@ export function requireAuth(req: NextRequest): SessionInfo {
   };
 }
 
+/**
+ * Hierarki sederhana: admin > sales.
+ * `requireRole(req, "sales")` artinya minimal sales (admin lulus juga).
+ * `requireRole(req, "admin")` hanya admin.
+ */
 const ROLE_HIERARCHY: Record<Role, Role[]> = {
   admin: ["admin"],
-  supervisor: ["admin", "supervisor"],
-  sales: ["admin", "supervisor", "sales"],
+  sales: ["admin", "sales"],
 };
 
 /** Pastikan user punya role minimal `min`. */

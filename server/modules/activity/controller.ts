@@ -5,7 +5,7 @@ import { activityLogger } from "../../core/logger";
 
 export const activityController = {
   async list(req: NextRequest) {
-    requireRole(req, "supervisor");
+    requireRole(req, "admin");
     const url = req.nextUrl.searchParams;
     const limit = Math.min(parseInt(url.get("limit") ?? "100", 10) || 100, 1000);
     const entity = url.get("entity") ?? undefined;

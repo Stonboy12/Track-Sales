@@ -7,7 +7,7 @@ import { parseQuery } from "../../core/validate";
 import { userService } from "./service";
 
 const listQuery = z.object({
-  role: z.enum(["admin", "supervisor", "sales"]).optional(),
+  role: z.enum(["admin", "sales"]).optional(),
   area: z.string().optional(),
   search: z.string().optional(),
 });

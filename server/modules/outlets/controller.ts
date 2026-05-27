@@ -39,7 +39,7 @@ export const outletController = {
   },
 
   async remove(req: NextRequest, id: string) {
-    const session = requireRole(req, "supervisor");
+    const session = requireRole(req, "admin");
     await outletService.remove(id, { id: session.sub, name: session.name });
     return ok({ id });
   },

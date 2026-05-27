@@ -5,6 +5,7 @@ import {
   notificationMapper,
   outletMapper,
   productMapper,
+  promoMapper,
   reportMapper,
   routePlanMapper,
   userProfileMapper,
@@ -19,6 +20,7 @@ import type {
   Notification,
   Outlet,
   Product,
+  Promo,
   Report,
   RoutePlan,
   UserSetting,
@@ -35,6 +37,7 @@ export interface DB {
   routePlans: Repository<RoutePlan>;
   competitorPrices: Repository<CompetitorPrice>;
   products: Repository<Product>;
+  promos: Repository<Promo>;
   complaints: Repository<Complaint>;
   reports: Repository<Report>;
   notifications: Repository<Notification>;
@@ -48,6 +51,7 @@ export const db: DB = {
   routePlans: createInsforgeRepository<RoutePlan>(routePlanMapper),
   competitorPrices: createInsforgeRepository<CompetitorPrice>(competitorPriceMapper),
   products: createInsforgeRepository<Product>(productMapper),
+  promos: createInsforgeRepository<Promo>(promoMapper),
   complaints: createInsforgeRepository<Complaint>(complaintMapper),
   reports: createInsforgeRepository<Report>(reportMapper),
   notifications: createInsforgeRepository<Notification>(notificationMapper),
