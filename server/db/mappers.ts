@@ -197,6 +197,7 @@ export const complaintMapper: Mapper<Complaint> = {
     if (c.reportedByName !== undefined) r.reported_by_name = c.reportedByName;
     if (c.description !== undefined) r.description = c.description;
     if (c.timeline !== undefined) r.timeline = c.timeline;
+    if (c.attachmentUrls !== undefined) r.attachment_urls = c.attachmentUrls;
     return r;
   },
   fromRow(r) {
@@ -214,6 +215,7 @@ export const complaintMapper: Mapper<Complaint> = {
       reportedByName: r.reported_by_name as string,
       description: r.description as string,
       timeline: (r.timeline as Complaint["timeline"]) ?? [],
+      attachmentUrls: (r.attachment_urls as string[] | null) ?? [],
       createdAt: toIso(r.created_at),
       updatedAt: toIso(r.updated_at),
     };

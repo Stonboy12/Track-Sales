@@ -134,6 +134,7 @@ export interface Complaint extends BaseEntity {
   reportedByName: string;
   description: string;
   timeline: ComplaintTimelineEntry[];
+  attachmentUrls?: string[];
 }
 
 export interface Notification extends BaseEntity {
