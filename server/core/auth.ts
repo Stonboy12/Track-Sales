@@ -1,24 +1,26 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { Errors } from "./errors";
+import { tryGetContext } from "./request-context";
 import type { Role } from "../db/types";
 
-const SECRET = process.env.AUTH_SECRET || "fmcg-dev-secret-change-me";
-export const SESSION_COOKIE = "fmcg_session";
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 hari
+/**
+ * Auth helper. Kita tidak lagi mint JWT sendiri — semua token diterbitkan
+ * InsForge lewat `signInWithPassword`. Server kita hanya menyimpan token itu
+ * di cookie httpOnly (sebagai session) dan mendekodenya untuk membaca claim.
+ *
+ * Verifikasi tanda tangan token dilakukan oleh InsForge sendiri pada setiap
+ * panggilan database / auth (request akan ditolak server InsForge bila token
+ * dipalsukan). Decoding di sini hanya untuk membaca `sub`, `email`, `exp`.
+ */
+export const SESSION_COOKIE = process.env.SESSION_COOKIE || "fmcg_session";
+const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export interface SessionPayload {
-  sub: string; // user id
-  role: Role;
+  sub: string;
   email: string;
-  name: string;
-  iat: number;
+  name?: string;
   exp: number;
-}
-
-function b64url(input: Buffer | string): string {
-  const buf = typeof input === "string" ? Buffer.from(input) : input;
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  iat?: number;
 }
 
 function b64urlDecode(input: string): Buffer {
@@ -27,46 +29,28 @@ function b64urlDecode(input: string): Buffer {
   return Buffer.from(s, "base64");
 }
 
-function sign(data: string): string {
-  return b64url(createHmac("sha256", SECRET).update(data).digest());
-}
-
-/**
- * Buat token mirip JWT (HS256). Sengaja tidak pakai library JWT untuk menghemat
- * dependency — implementasi kecil, mudah diaudit, mudah diganti dengan `jose` nanti.
- */
-export function signToken(payload: Omit<SessionPayload, "iat" | "exp">): string {
-  const header = { alg: "HS256", typ: "JWT" };
-  const now = Math.floor(Date.now() / 1000);
-  const fullPayload: SessionPayload = {
-    ...payload,
-    iat: now,
-    exp: now + SESSION_TTL_SECONDS,
-  };
-  const encHeader = b64url(JSON.stringify(header));
-  const encPayload = b64url(JSON.stringify(fullPayload));
-  const signature = sign(`${encHeader}.${encPayload}`);
-  return `${encHeader}.${encPayload}.${signature}`;
-}
-
-export function verifyToken(token: string): SessionPayload | null {
+export function decodeSession(token: string): SessionPayload | null {
   try {
-    const [h, p, s] = token.split(".");
-    if (!h || !p || !s) return null;
-    const expected = sign(`${h}.${p}`);
-    const a = Buffer.from(s);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-    const payload = JSON.parse(b64urlDecode(p).toString("utf-8")) as SessionPayload;
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const json = JSON.parse(b64urlDecode(payload).toString("utf-8")) as
+      | (SessionPayload & { name?: string; user?: { name?: string; profile?: { name?: string } } })
+      | null;
+    if (!json) return null;
+    if (json.exp && json.exp * 1000 < Date.now()) return null;
+    return {
+      sub: json.sub,
+      email: json.email,
+      name: json.name ?? json.user?.profile?.name ?? json.user?.name,
+      exp: json.exp,
+      iat: json.iat,
+    };
   } catch {
     return null;
   }
 }
 
-/** Bentuk Set-Cookie string siap dipakai NextResponse. */
-export function buildSessionCookie(token: string, maxAgeSec = SESSION_TTL_SECONDS): string {
+export function buildSessionCookie(token: string, maxAgeSec = COOKIE_TTL_SECONDS): string {
   const parts = [
     `${SESSION_COOKIE}=${token}`,
     "Path=/",
@@ -84,22 +68,58 @@ export function buildClearSessionCookie(): string {
   return parts.join("; ");
 }
 
+export function readSessionToken(req: NextRequest): string | null {
+  return req.cookies.get(SESSION_COOKIE)?.value ?? null;
+}
+
 export function getSession(req: NextRequest): SessionPayload | null {
-  const token = req.cookies.get(SESSION_COOKIE)?.value;
+  const token = readSessionToken(req);
   if (!token) return null;
-  return verifyToken(token);
+  return decodeSession(token);
 }
 
-/** Pastikan request terautentikasi, lempar 401 bila tidak. */
-export function requireAuth(req: NextRequest): SessionPayload {
-  const session = getSession(req);
-  if (!session) throw Errors.unauthorized();
-  return session;
+/**
+ * Pastikan request terautentikasi. Mengembalikan info user dari context;
+ * gunakan ini di controller menggantikan getSession langsung.
+ */
+export interface SessionInfo {
+  sub: string;
+  email: string;
+  name: string;
+  role?: Role;
+  token: string;
 }
 
-/** Pastikan user punya salah satu role yang diizinkan. */
-export function requireRole(req: NextRequest, ...roles: Role[]): SessionPayload {
+export function requireAuth(req: NextRequest): SessionInfo {
+  const ctx = tryGetContext();
+  const token = ctx?.accessToken ?? readSessionToken(req);
+  const session = token ? decodeSession(token) : null;
+  if (!token || !session) throw Errors.unauthorized();
+  return {
+    sub: session.sub,
+    email: session.email,
+    name: session.name ?? session.email.split("@")[0],
+    role: ctx?.role,
+    token,
+  };
+}
+
+const ROLE_HIERARCHY: Record<Role, Role[]> = {
+  admin: ["admin"],
+  supervisor: ["admin", "supervisor"],
+  sales: ["admin", "supervisor", "sales"],
+};
+
+/** Pastikan user punya role minimal `min`. */
+export function requireRole(req: NextRequest, ...allowed: Role[]): SessionInfo {
   const session = requireAuth(req);
-  if (!roles.includes(session.role)) throw Errors.forbidden();
+  if (!session.role || !allowed.includes(session.role)) {
+    // dukung juga "role minimal" via hierarki: bila allowed=["sales"], sales/supervisor/admin OK
+    const expanded = new Set<Role>();
+    for (const a of allowed) for (const r of ROLE_HIERARCHY[a]) expanded.add(r);
+    if (!session.role || !expanded.has(session.role)) {
+      throw Errors.forbidden();
+    }
+  }
   return session;
 }

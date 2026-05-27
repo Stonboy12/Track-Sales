@@ -14,6 +14,6 @@ export const leaderboardController = {
   async list(req: NextRequest) {
     requireAuth(req);
     const q = parseQuery(req, querySchema);
-    return ok(leaderboardService.ranking(q));
+    return ok(await leaderboardService.ranking(q));
   },
 };

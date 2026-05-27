@@ -16,11 +16,11 @@ export const userController = {
   async list(req: NextRequest) {
     requireAuth(req);
     const q = parseQuery(req, listQuery);
-    return ok(userService.list(q));
+    return ok(await userService.list(q));
   },
   async getById(req: NextRequest, id: string) {
     requireAuth(req);
-    const u = userService.get(id);
+    const u = await userService.get(id);
     if (!u) throw Errors.notFound("User");
     return ok(u);
   },

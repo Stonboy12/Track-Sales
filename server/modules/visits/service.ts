@@ -1,6 +1,6 @@
 import { Errors } from "../../core/errors";
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { Visit } from "../../db/types";
 import type {
   VisitCreateInput,
@@ -14,36 +14,33 @@ interface Actor {
 }
 
 export const visitService = {
-  list(q: VisitListQuery) {
-    const all = db.visits.findAll((v) => {
-      if (q.outletId && v.outletId !== q.outletId) return false;
-      if (q.salesId && v.salesId !== q.salesId) return false;
-      if (q.outcome && v.outcome !== q.outcome) return false;
-      if (q.from && v.visitDate < q.from) return false;
-      if (q.to && v.visitDate > q.to) return false;
-      return true;
-    });
-    all.sort((a, b) => b.visitDate.localeCompare(a.visitDate));
-    const total = all.length;
-    const start = (q.page - 1) * q.limit;
-    return {
-      items: all.slice(start, start + q.limit),
-      total,
-      page: q.page,
+  async list(q: VisitListQuery) {
+    const opts = {
+      where: {
+        ...(q.outletId ? { outlet_id: q.outletId } : {}),
+        ...(q.salesId ? { sales_id: q.salesId } : {}),
+        ...(q.outcome ? { outcome: q.outcome } : {}),
+      },
+      gte: q.from ? { visit_date: q.from } : undefined,
+      lte: q.to ? { visit_date: q.to } : undefined,
+      order: [{ column: "visit_date", ascending: false }],
       limit: q.limit,
+      offset: (q.page - 1) * q.limit,
     };
+    const { items, total } = await db.visits.listWithCount(opts);
+    return { items, total, page: q.page, limit: q.limit };
   },
 
-  get(id: string): Visit {
-    const v = db.visits.findById(id);
+  async get(id: string): Promise<Visit> {
+    const v = await db.visits.findById(id);
     if (!v) throw Errors.notFound("Visit");
     return v;
   },
 
-  create(input: VisitCreateInput, actor: Actor): Visit {
-    const outlet = db.outlets.findById(input.outletId);
+  async create(input: VisitCreateInput, actor: Actor): Promise<Visit> {
+    const outlet = await db.outlets.findById(input.outletId);
     if (!outlet) throw Errors.notFound("Outlet");
-    const created = db.visits.create({
+    const created = await db.visits.create({
       outletId: input.outletId,
       salesId: input.salesId ?? actor.id,
       visitDate: input.visitDate,
@@ -51,7 +48,7 @@ export const visitService = {
       orderValue: input.orderValue,
       notes: input.notes,
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "visit.create",
@@ -62,10 +59,10 @@ export const visitService = {
     return created;
   },
 
-  update(id: string, patch: VisitUpdateInput, actor: Actor): Visit {
-    this.get(id);
-    const u = db.visits.update(id, patch);
-    activityLogger.record({
+  async update(id: string, patch: VisitUpdateInput, actor: Actor): Promise<Visit> {
+    await this.get(id);
+    const u = await db.visits.update(id, patch);
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "visit.update",
@@ -75,10 +72,11 @@ export const visitService = {
     return u;
   },
 
-  /** Histori kunjungan untuk satu outlet (paling baru duluan). */
-  byOutlet(outletId: string) {
-    return db.visits
-      .findAll((v) => v.outletId === outletId)
-      .sort((a, b) => b.visitDate.localeCompare(a.visitDate));
+  async byOutlet(outletId: string) {
+    const all = await db.visits.findAll({
+      where: { outlet_id: outletId },
+      order: [{ column: "visit_date", ascending: false }],
+    });
+    return all;
   },
 };

@@ -1,6 +1,6 @@
 import { Errors } from "../../core/errors";
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { Report } from "../../db/types";
 import type { ReportGenerateInput, ReportSaveInput } from "./schemas";
 
@@ -54,34 +54,34 @@ export const reportService = {
       lines.push("Catatan Umum:");
       lines.push(input.generalNotes);
     }
-    const generatedText = lines.join("\n");
     return {
       summary: { total, success, orderTotal },
-      generatedText,
+      generatedText: lines.join("\n"),
     };
   },
 
-  list(salesId?: string) {
-    return db.reports
-      .findAll((r) => (salesId ? r.salesId === salesId : true))
-      .sort((a, b) => b.date.localeCompare(a.date));
+  async list(salesId?: string) {
+    return db.reports.findAll({
+      where: salesId ? { sales_id: salesId } : undefined,
+      order: [{ column: "date", ascending: false }],
+    });
   },
 
-  get(id: string): Report {
-    const r = db.reports.findById(id);
+  async get(id: string): Promise<Report> {
+    const r = await db.reports.findById(id);
     if (!r) throw Errors.notFound("Report");
     return r;
   },
 
-  save(input: ReportSaveInput, actor: Actor): Report {
-    const created = db.reports.create({
+  async save(input: ReportSaveInput, actor: Actor): Promise<Report> {
+    const created = await db.reports.create({
       date: input.date,
       salesId: actor.id,
       visits: input.visits,
       generalNotes: input.generalNotes,
       generatedText: input.generatedText,
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "report.save",

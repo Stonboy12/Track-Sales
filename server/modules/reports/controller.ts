@@ -16,15 +16,15 @@ export const reportController = {
     const url = req.nextUrl.searchParams;
     const salesId =
       url.get("salesId") ?? (session.role === "sales" ? session.sub : undefined);
-    return ok(reportService.list(salesId));
+    return ok(await reportService.list(salesId));
   },
   async getById(req: NextRequest, id: string) {
     requireAuth(req);
-    return ok(reportService.get(id));
+    return ok(await reportService.get(id));
   },
   async save(req: NextRequest) {
     const session = requireAuth(req);
     const input = await parseBody(req, reportSaveSchema);
-    return created(reportService.save(input, { id: session.sub, name: session.name }));
+    return created(await reportService.save(input, { id: session.sub, name: session.name }));
   },
 };

@@ -1,6 +1,6 @@
 import { Errors } from "../../core/errors";
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { Outlet } from "../../db/types";
 import type {
   OutletCreateInput,
@@ -14,38 +14,38 @@ interface Actor {
 }
 
 export const outletService = {
-  list(q: OutletListQuery) {
-    const filtered = db.outlets.findAll((o) => {
-      if (q.search && !`${o.name} ${o.code} ${o.ownerName}`.toLowerCase().includes(q.search.toLowerCase()))
-        return false;
-      if (q.area && o.area !== q.area) return false;
-      if (q.segment && o.segment !== q.segment) return false;
-      if (q.priority && o.priority !== q.priority) return false;
-      if (q.status && o.status !== q.status) return false;
-      if (q.assignedSalesId && o.assignedSalesId !== q.assignedSalesId) return false;
-      return true;
-    });
-    const total = filtered.length;
-    const start = (q.page - 1) * q.limit;
-    return {
-      items: filtered.slice(start, start + q.limit),
-      total,
-      page: q.page,
+  async list(q: OutletListQuery) {
+    const opts = {
+      where: {
+        ...(q.area ? { area: q.area } : {}),
+        ...(q.segment ? { segment: q.segment } : {}),
+        ...(q.priority ? { priority: q.priority } : {}),
+        ...(q.status ? { status: q.status } : {}),
+        ...(q.assignedSalesId ? { assigned_sales_id: q.assignedSalesId } : {}),
+      },
+      ilike: q.search
+        ? { name: `%${q.search}%` }
+        : undefined,
+      order: [{ column: "created_at", ascending: false }],
       limit: q.limit,
+      offset: (q.page - 1) * q.limit,
     };
+    const { items, total } = await db.outlets.listWithCount(opts);
+    return { items, total, page: q.page, limit: q.limit };
   },
 
-  get(id: string): Outlet {
-    const found = db.outlets.findById(id);
+  async get(id: string): Promise<Outlet> {
+    const found = await db.outlets.findById(id);
     if (!found) throw Errors.notFound("Outlet");
     return found;
   },
 
-  /** Detail outlet + ringkasan visit & komplain. Dipakai halaman performance. */
-  getDetail(id: string) {
-    const outlet = this.get(id);
-    const visits = db.visits.findAll((v) => v.outletId === id);
-    const complaints = db.complaints.findAll((c) => c.outletId === id);
+  async getDetail(id: string) {
+    const outlet = await this.get(id);
+    const [visits, complaints] = await Promise.all([
+      db.visits.findAll({ where: { outlet_id: id } }),
+      db.complaints.findAll({ where: { outlet_id: id } }),
+    ]);
     const orderedVisits = [...visits].sort((a, b) =>
       b.visitDate.localeCompare(a.visitDate)
     );
@@ -62,12 +62,11 @@ export const outletService = {
     };
   },
 
-  create(input: OutletCreateInput, actor: Actor): Outlet {
-    if (db.outlets.findOne((o) => o.code === input.code)) {
-      throw Errors.conflict("Kode outlet sudah dipakai.");
-    }
-    const created = db.outlets.create(input);
-    activityLogger.record({
+  async create(input: OutletCreateInput, actor: Actor): Promise<Outlet> {
+    const dup = await db.outlets.findOne({ where: { code: input.code } });
+    if (dup) throw Errors.conflict("Kode outlet sudah dipakai.");
+    const created = await db.outlets.create(input);
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "outlet.create",
@@ -78,14 +77,14 @@ export const outletService = {
     return created;
   },
 
-  update(id: string, patch: OutletUpdateInput, actor: Actor): Outlet {
-    this.get(id); // ensure exists
+  async update(id: string, patch: OutletUpdateInput, actor: Actor): Promise<Outlet> {
+    await this.get(id);
     if (patch.code) {
-      const dup = db.outlets.findOne((o) => o.code === patch.code && o.id !== id);
-      if (dup) throw Errors.conflict("Kode outlet sudah dipakai.");
+      const dup = await db.outlets.findOne({ where: { code: patch.code } });
+      if (dup && dup.id !== id) throw Errors.conflict("Kode outlet sudah dipakai.");
     }
-    const updated = db.outlets.update(id, patch);
-    activityLogger.record({
+    const updated = await db.outlets.update(id, patch);
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "outlet.update",
@@ -96,10 +95,10 @@ export const outletService = {
     return updated;
   },
 
-  remove(id: string, actor: Actor) {
-    this.get(id);
-    db.outlets.delete(id);
-    activityLogger.record({
+  async remove(id: string, actor: Actor) {
+    await this.get(id);
+    await db.outlets.delete(id);
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "outlet.delete",
@@ -108,10 +107,9 @@ export const outletService = {
     });
   },
 
-  /** Performance summary lintas outlet (untuk Outlet Performance Dashboard). */
-  performanceSummary(area?: string) {
-    const outlets = db.outlets.findAll((o) => (area ? o.area === area : true));
-    const visits = db.visits.findAll();
+  async performanceSummary(area?: string) {
+    const outlets = await db.outlets.findAll(area ? { where: { area } } : undefined);
+    const visits = await db.visits.findAll();
     const grouped = outlets.map((o) => {
       const ov = visits.filter((v) => v.outletId === o.id);
       const revenue = ov.reduce((s, v) => s + v.orderValue, 0);

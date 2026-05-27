@@ -1,6 +1,6 @@
 import { Errors } from "../../core/errors";
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { Outlet, Priority, RoutePlan } from "../../db/types";
 import type { RouteOptimizeInput, RouteSaveInput } from "./schemas";
 
@@ -12,15 +12,12 @@ interface Actor {
 const PRIORITY_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 export const routePlanService = {
-  /**
-   * Algoritma optimasi sederhana — bukan VRP solver beneran, tapi cukup untuk
-   * mock backend. Endpoint ini bisa diganti panggilan ke service eksternal
-   * (Mapbox / OSRM / ML) tanpa ubah controller.
-   */
-  optimize(input: RouteOptimizeInput) {
+  async optimize(input: RouteOptimizeInput) {
+    const all = await db.outlets.findAll({ in: { id: input.outletIds } });
+    const byId = new Map(all.map((o) => [o.id, o]));
     const outlets = input.outletIds
-      .map((id) => db.outlets.findById(id))
-      .filter((o): o is Outlet => o !== null);
+      .map((id) => byId.get(id))
+      .filter((o): o is Outlet => Boolean(o));
     if (outlets.length === 0) throw Errors.notFound("Outlet");
 
     let ordered: Outlet[];
@@ -40,7 +37,6 @@ export const routePlanService = {
         );
         break;
       case "balanced":
-        // Skor gabungan: prioritas + outlet aktif duluan + area dikelompokkan
         ordered = [...outlets].sort((a, b) => {
           const pa = PRIORITY_RANK[a.priority] + (a.status === "active" ? 0 : 1);
           const pb = PRIORITY_RANK[b.priority] + (b.status === "active" ? 0 : 1);
@@ -60,34 +56,29 @@ export const routePlanService = {
         priority: o.priority,
       })),
       estimatedDurationMin,
-      estimatedDistanceKm: ordered.length * 4.2, // mock heuristic
+      estimatedDistanceKm: Math.round(ordered.length * 4.2 * 10) / 10,
     };
   },
 
-  list(salesId?: string): RoutePlan[] {
-    return db.routePlans
-      .findAll((r) => (salesId ? r.salesId === salesId : true))
-      .sort((a, b) => b.date.localeCompare(a.date));
+  async list(salesId?: string): Promise<RoutePlan[]> {
+    return db.routePlans.findAll({
+      where: salesId ? { sales_id: salesId } : undefined,
+      order: [{ column: "date", ascending: false }],
+    });
   },
 
-  get(id: string): RoutePlan {
-    const r = db.routePlans.findById(id);
-    if (!r) throw Errors.notFound("Route Plan");
-    return r;
-  },
-
-  save(input: RouteSaveInput, actor: Actor): RoutePlan {
-    // Validasi: semua outlet harus ada
+  async save(input: RouteSaveInput, actor: Actor): Promise<RoutePlan> {
     for (const id of input.outletIds) {
-      if (!db.outlets.findById(id)) throw Errors.notFound(`Outlet ${id}`);
+      const o = await db.outlets.findById(id);
+      if (!o) throw Errors.notFound(`Outlet ${id}`);
     }
-    const created = db.routePlans.create({
+    const created = await db.routePlans.create({
       salesId: actor.id,
       date: input.date,
       outletIds: input.outletIds,
       name: input.name,
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "route.save",

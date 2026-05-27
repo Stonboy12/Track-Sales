@@ -1,11 +1,12 @@
 /**
- * Tipe inti entitas backend. Disengaja diperluas dari tipe `lib/mock-data.ts`
- * agar siap dipakai untuk persist (DB) — `createdAt`, `updatedAt`, ownership, dll.
+ * Tipe inti entitas backend. Menyamai bentuk row di Postgres tapi pakai
+ * camelCase. Konversi snake_case ↔ camelCase ada di `mappers.ts`.
  */
+
 export interface BaseEntity {
   id: string;
-  createdAt: string; // ISO
-  updatedAt: string; // ISO
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type Role = "admin" | "supervisor" | "sales";
@@ -18,16 +19,17 @@ export type ComplaintCategory = "kualitas" | "pengiriman" | "harga" | "lainnya";
 export type VisitOutcome = "order" | "no_order" | "follow_up" | "closed";
 export type StockStatus = "in_stock" | "low" | "out";
 
-export interface User extends BaseEntity {
+/** Bentuk public user yang dikembalikan oleh /api/auth/me. */
+export interface PublicUser {
+  id: string;
   email: string;
   name: string;
   role: Role;
   area?: string;
   phone?: string;
-  passwordHash: string;
-  active: boolean;
-  /** target sales bulanan dalam rupiah; dipakai untuk leaderboard */
   monthlyTarget?: number;
+  avatarUrl?: string;
+  emailVerified?: boolean;
 }
 
 export interface Outlet extends BaseEntity {
@@ -40,14 +42,13 @@ export interface Outlet extends BaseEntity {
   ownerName: string;
   phone: string;
   address: string;
-  /** id user yang memegang outlet */
   assignedSalesId?: string;
 }
 
 export interface Visit extends BaseEntity {
   outletId: string;
   salesId: string;
-  visitDate: string; // YYYY-MM-DD
+  visitDate: string;
   outcome: VisitOutcome;
   orderValue: number;
   notes?: string;
@@ -55,8 +56,8 @@ export interface Visit extends BaseEntity {
 
 export interface RoutePlan extends BaseEntity {
   salesId: string;
-  date: string; // YYYY-MM-DD
-  outletIds: string[]; // urutan stop
+  date: string;
+  outletIds: string[];
   name?: string;
 }
 
@@ -68,9 +69,9 @@ export interface CompetitorPrice extends BaseEntity {
   area: string;
   price: number;
   ourPrice: number;
-  observedAt: string; // YYYY-MM-DD
+  observedAt: string;
   note?: string;
-  reportedBy: string; // user id
+  reportedBy: string;
 }
 
 export interface Product extends BaseEntity {
@@ -98,18 +99,6 @@ export interface Report extends BaseEntity {
   }[];
   generalNotes?: string;
   generatedText: string;
-}
-
-export interface PromoSimulation extends BaseEntity {
-  name: string;
-  basePrice: number;
-  qty: number;
-  discountPct: number;
-  bundling: number;
-  cashback: number;
-  costPerUnit?: number;
-  result: PromoResult;
-  createdBy: string;
 }
 
 export interface PromoResult {
@@ -161,10 +150,4 @@ export interface UserSetting extends BaseEntity {
   language: "id" | "en";
   notifications: Record<string, boolean>;
   bio?: string;
-}
-
-/** Filter helper umum */
-export interface Pagination {
-  page?: number;
-  limit?: number;
 }

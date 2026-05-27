@@ -5,11 +5,11 @@ import { activityLogger } from "../../core/logger";
 
 export const activityController = {
   async list(req: NextRequest) {
-    requireRole(req, "admin", "supervisor");
+    requireRole(req, "supervisor");
     const url = req.nextUrl.searchParams;
     const limit = Math.min(parseInt(url.get("limit") ?? "100", 10) || 100, 1000);
     const entity = url.get("entity") ?? undefined;
     const actorId = url.get("actorId") ?? undefined;
-    return ok(activityLogger.list({ limit, entity, actorId }));
+    return ok(await activityLogger.list({ limit, entity, actorId }));
   },
 };

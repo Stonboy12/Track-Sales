@@ -1,73 +1,36 @@
-import { randomId } from "../core/crypto";
 import type { BaseEntity } from "./types";
 
 /**
- * Repository generic — interface CRUD minimal yang sama untuk semua entitas.
- * Implementasi default-nya pakai in-memory store. Cara swap ke DB asli:
- *   - Buat class baru yang mengimplementasi `Repository<T>`
- *   - Ekspor instance-nya dari `server/db/memory.ts`
- *   - Tidak perlu mengubah service/controller.
+ * Generic async Repository<T>. Implementasi default-nya pakai InsForge SDK
+ * (lihat `insforge-repository.ts`). Cara swap ke DB lain (mis. Postgres
+ * langsung): ganti factory di `server/db/index.ts`.
  */
-export interface Repository<T extends BaseEntity> {
-  findAll(filter?: (t: T) => boolean): T[];
-  findById(id: string): T | null;
-  findOne(predicate: (t: T) => boolean): T | null;
-  create(input: Omit<T, "id" | "createdAt" | "updatedAt">): T;
-  update(id: string, patch: Partial<Omit<T, "id" | "createdAt" | "updatedAt">>): T;
-  delete(id: string): void;
-  count(filter?: (t: T) => boolean): number;
+export interface QueryOptions {
+  /** Equality filters (column = value). */
+  where?: Record<string, unknown>;
+  /** ILIKE filters: { column: '%pattern%' } */
+  ilike?: Record<string, string>;
+  /** IN filters. */
+  in?: Record<string, unknown[]>;
+  /** Greater-than-or-equal filters. */
+  gte?: Record<string, unknown>;
+  /** Less-than-or-equal filters. */
+  lte?: Record<string, unknown>;
+  /** IS filters (e.g. for null). */
+  is?: Record<string, unknown>;
+  order?: { column: string; ascending?: boolean }[];
+  limit?: number;
+  offset?: number;
 }
 
-/** Implementasi default in-memory. Aman untuk preview & test. */
-export function createMemoryRepository<T extends BaseEntity>(
-  entityName: string,
-  initial: T[] = []
-): Repository<T> {
-  const store = new Map<string, T>();
-  for (const item of initial) store.set(item.id, item);
-
-  return {
-    findAll(filter) {
-      const all = Array.from(store.values());
-      return filter ? all.filter(filter) : all;
-    },
-    findById(id) {
-      return store.get(id) ?? null;
-    },
-    findOne(predicate) {
-      for (const v of store.values()) if (predicate(v)) return v;
-      return null;
-    },
-    create(input) {
-      const now = new Date().toISOString();
-      const id = randomId(entityName.slice(0, 3));
-      const entity = { ...input, id, createdAt: now, updatedAt: now } as T;
-      store.set(id, entity);
-      return entity;
-    },
-    update(id, patch) {
-      const existing = store.get(id);
-      if (!existing) {
-        throw new Error(`${entityName} ${id} not found`);
-      }
-      const updated = {
-        ...existing,
-        ...patch,
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: new Date().toISOString(),
-      } as T;
-      store.set(id, updated);
-      return updated;
-    },
-    delete(id) {
-      store.delete(id);
-    },
-    count(filter) {
-      if (!filter) return store.size;
-      let n = 0;
-      for (const v of store.values()) if (filter(v)) n++;
-      return n;
-    },
-  };
+export interface Repository<T extends BaseEntity> {
+  findAll(opts?: QueryOptions): Promise<T[]>;
+  findById(id: string): Promise<T | null>;
+  findOne(opts: QueryOptions): Promise<T | null>;
+  create(input: Omit<T, "id" | "createdAt" | "updatedAt">): Promise<T>;
+  update(id: string, patch: Partial<Omit<T, "id" | "createdAt" | "updatedAt">>): Promise<T>;
+  delete(id: string): Promise<void>;
+  count(opts?: QueryOptions): Promise<number>;
+  /** Untuk join eager — opsional. Default panggil findAll saja. */
+  listWithCount(opts?: QueryOptions): Promise<{ items: T[]; total: number }>;
 }

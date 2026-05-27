@@ -9,6 +9,6 @@ export const dashboardController = {
     const url = req.nextUrl.searchParams;
     const salesId =
       url.get("salesId") ?? (session.role === "sales" ? session.sub : undefined);
-    return ok(dashboardService.summary(salesId));
+    return ok(await dashboardService.summary(salesId));
   },
 };

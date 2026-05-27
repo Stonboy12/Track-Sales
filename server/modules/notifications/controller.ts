@@ -12,7 +12,6 @@ const listQuery = z.object({
 
 const updateSchema = z.object({
   ids: z.array(z.string()).optional(),
-  /** kalau true & ids kosong, mark all as read */
   all: z.boolean().optional(),
 });
 
@@ -21,7 +20,7 @@ export const notificationController = {
     const session = requireAuth(req);
     const q = parseQuery(req, listQuery);
     return ok(
-      notificationService.list(session.sub, {
+      await notificationService.list(session.sub, {
         unreadOnly: q.unread,
         limit: q.limit,
       })
@@ -30,11 +29,9 @@ export const notificationController = {
   async update(req: NextRequest) {
     const session = requireAuth(req);
     const input = await parseBody(req, updateSchema);
-    if (input.all) {
-      return ok(notificationService.markAllRead(session.sub));
-    }
-    const updated = (input.ids ?? []).map((id) =>
-      notificationService.markRead(session.sub, id)
+    if (input.all) return ok(await notificationService.markAllRead(session.sub));
+    const updated = await Promise.all(
+      (input.ids ?? []).map((id) => notificationService.markRead(session.sub, id))
     );
     return ok(updated);
   },

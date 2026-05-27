@@ -1,5 +1,5 @@
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { CompetitorPrice } from "../../db/types";
 import type {
   CompetitorPriceCreateInput,
@@ -12,39 +12,36 @@ interface Actor {
 }
 
 export const competitorPriceService = {
-  list(q: CompetitorPriceListQuery) {
-    const all = db.competitorPrices.findAll((c) => {
-      if (q.productName && c.productName !== q.productName) return false;
-      if (q.competitor && c.competitor !== q.competitor) return false;
-      if (q.area && c.area !== q.area) return false;
-      if (q.from && c.observedAt < q.from) return false;
-      if (q.to && c.observedAt > q.to) return false;
-      if (
-        q.search &&
-        !`${c.productName} ${c.competitor} ${c.outlet}`
-          .toLowerCase()
-          .includes(q.search.toLowerCase())
-      )
-        return false;
-      return true;
-    });
-    all.sort((a, b) => b.observedAt.localeCompare(a.observedAt));
-    const total = all.length;
-    const start = (q.page - 1) * q.limit;
-    return {
-      items: all.slice(start, start + q.limit),
-      total,
-      page: q.page,
+  async list(q: CompetitorPriceListQuery) {
+    const opts = {
+      where: {
+        ...(q.productName ? { product_name: q.productName } : {}),
+        ...(q.competitor ? { competitor: q.competitor } : {}),
+        ...(q.area ? { area: q.area } : {}),
+      },
+      gte: q.from ? { observed_at: q.from } : undefined,
+      lte: q.to ? { observed_at: q.to } : undefined,
+      order: [{ column: "observed_at", ascending: false }],
       limit: q.limit,
+      offset: (q.page - 1) * q.limit,
     };
+    const { items, total } = await db.competitorPrices.listWithCount(opts);
+    let result = items;
+    if (q.search) {
+      const term = q.search.toLowerCase();
+      result = items.filter((c) =>
+        `${c.productName} ${c.competitor} ${c.outlet}`.toLowerCase().includes(term)
+      );
+    }
+    return { items: result, total, page: q.page, limit: q.limit };
   },
 
-  create(input: CompetitorPriceCreateInput, actor: Actor): CompetitorPrice {
-    const created = db.competitorPrices.create({
+  async create(input: CompetitorPriceCreateInput, actor: Actor): Promise<CompetitorPrice> {
+    const created = await db.competitorPrices.create({
       ...input,
       reportedBy: actor.id,
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "competitor_price.create",
@@ -55,17 +52,15 @@ export const competitorPriceService = {
     return created;
   },
 
-  /**
-   * Tren harga harian: rata-rata harga kami vs kompetitor untuk produk tertentu.
-   * Output siap-pakai oleh komponen LineChart frontend.
-   */
-  trend(productName: string, days: number) {
+  async trend(productName: string, days: number) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     const cutoffStr = cutoff.toISOString().slice(0, 10);
-    const records = db.competitorPrices.findAll(
-      (c) => c.productName === productName && c.observedAt >= cutoffStr
-    );
+    const records = await db.competitorPrices.findAll({
+      where: { product_name: productName },
+      gte: { observed_at: cutoffStr },
+      order: [{ column: "observed_at", ascending: true }],
+    });
 
     const grouped = new Map<string, { sumUs: number; sumComp: number; n: number }>();
     for (const r of records) {
@@ -83,7 +78,6 @@ export const competitorPriceService = {
         comp: Math.round(v.sumComp / v.n),
       }));
 
-    // Insight ringan — gantilah dengan call ke LLM saat AI siap.
     let insight = "Belum ada data cukup untuk menghasilkan insight.";
     if (series.length >= 2) {
       const first = series[0];

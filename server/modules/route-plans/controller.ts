@@ -9,17 +9,17 @@ export const routePlanController = {
   async optimize(req: NextRequest) {
     requireAuth(req);
     const input = await parseBody(req, routeOptimizeSchema);
-    return ok(routePlanService.optimize(input));
+    return ok(await routePlanService.optimize(input));
   },
   async list(req: NextRequest) {
     const session = requireAuth(req);
     const url = req.nextUrl.searchParams;
     const sales = url.get("salesId") ?? (session.role === "sales" ? session.sub : undefined);
-    return ok(routePlanService.list(sales));
+    return ok(await routePlanService.list(sales));
   },
   async save(req: NextRequest) {
     const session = requireAuth(req);
     const input = await parseBody(req, routeSaveSchema);
-    return created(routePlanService.save(input, { id: session.sub, name: session.name }));
+    return created(await routePlanService.save(input, { id: session.sub, name: session.name }));
   },
 };

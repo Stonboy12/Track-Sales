@@ -8,13 +8,13 @@ import { settingsUpdateSchema } from "./schemas";
 export const settingsController = {
   async get(req: NextRequest) {
     const session = requireAuth(req);
-    return ok(settingsService.get(session.sub));
+    return ok(await settingsService.get(session.sub));
   },
   async update(req: NextRequest) {
     const session = requireAuth(req);
     const patch = await parseBody(req, settingsUpdateSchema);
     return ok(
-      settingsService.update({ id: session.sub, name: session.name }, patch)
+      await settingsService.update({ id: session.sub, name: session.name }, patch)
     );
   },
 };

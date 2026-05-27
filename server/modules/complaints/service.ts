@@ -1,6 +1,6 @@
 import { Errors } from "../../core/errors";
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import type { Complaint } from "../../db/types";
 import type {
   ComplaintCreateInput,
@@ -14,8 +14,8 @@ interface Actor {
   name: string;
 }
 
-function nextCode() {
-  const all = db.complaints.findAll();
+async function nextCode(): Promise<string> {
+  const all = await db.complaints.findAll();
   const max = all.reduce((m, c) => {
     const n = parseInt(c.code.replace("CMP-", ""), 10);
     return Number.isFinite(n) ? Math.max(m, n) : m;
@@ -24,36 +24,36 @@ function nextCode() {
 }
 
 export const complaintService = {
-  list(q: ComplaintListQuery): Complaint[] {
-    return db.complaints
-      .findAll((c) => {
-        if (q.status && c.status !== q.status) return false;
-        if (q.priority && c.priority !== q.priority) return false;
-        if (q.category && c.category !== q.category) return false;
-        if (q.outletId && c.outletId !== q.outletId) return false;
-        if (
-          q.search &&
-          !`${c.code} ${c.outletName} ${c.productName} ${c.description}`
-            .toLowerCase()
-            .includes(q.search.toLowerCase())
-        )
-          return false;
-        return true;
-      })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  async list(q: ComplaintListQuery): Promise<Complaint[]> {
+    const all = await db.complaints.findAll({
+      where: {
+        ...(q.status ? { status: q.status } : {}),
+        ...(q.priority ? { priority: q.priority } : {}),
+        ...(q.category ? { category: q.category } : {}),
+        ...(q.outletId ? { outlet_id: q.outletId } : {}),
+      },
+      order: [{ column: "created_at", ascending: false }],
+    });
+    if (!q.search) return all;
+    const term = q.search.toLowerCase();
+    return all.filter((c) =>
+      `${c.code} ${c.outletName} ${c.productName} ${c.description}`
+        .toLowerCase()
+        .includes(term)
+    );
   },
 
-  get(id: string): Complaint {
-    const c = db.complaints.findById(id);
+  async get(id: string): Promise<Complaint> {
+    const c = await db.complaints.findById(id);
     if (!c) throw Errors.notFound("Complaint");
     return c;
   },
 
-  create(input: ComplaintCreateInput, actor: Actor): Complaint {
-    const outlet = db.outlets.findById(input.outletId);
+  async create(input: ComplaintCreateInput, actor: Actor): Promise<Complaint> {
+    const outlet = await db.outlets.findById(input.outletId);
     if (!outlet) throw Errors.notFound("Outlet");
-    const code = nextCode();
-    const created = db.complaints.create({
+    const code = await nextCode();
+    const created = await db.complaints.create({
       code,
       outletId: outlet.id,
       outletName: outlet.name,
@@ -74,7 +74,7 @@ export const complaintService = {
         },
       ],
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "complaint.create",
@@ -85,8 +85,8 @@ export const complaintService = {
     return created;
   },
 
-  update(id: string, patch: ComplaintUpdateInput, actor: Actor): Complaint {
-    const existing = this.get(id);
+  async update(id: string, patch: ComplaintUpdateInput, actor: Actor): Promise<Complaint> {
+    const existing = await this.get(id);
     const timeline = [...existing.timeline];
     if (patch.status && patch.status !== existing.status) {
       timeline.push({
@@ -98,8 +98,8 @@ export const complaintService = {
         statusTo: patch.status,
       });
     }
-    const updated = db.complaints.update(id, { ...patch, timeline });
-    activityLogger.record({
+    const updated = await db.complaints.update(id, { ...patch, timeline });
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "complaint.update",
@@ -110,8 +110,8 @@ export const complaintService = {
     return updated;
   },
 
-  appendTimeline(id: string, input: ComplaintTimelineInput, actor: Actor): Complaint {
-    const existing = this.get(id);
+  async appendTimeline(id: string, input: ComplaintTimelineInput, actor: Actor): Promise<Complaint> {
+    const existing = await this.get(id);
     const entry = {
       at: new Date().toISOString(),
       actorId: actor.id,
@@ -121,11 +121,11 @@ export const complaintService = {
       statusTo: input.status ?? existing.status,
     };
     const timeline = [...existing.timeline, entry];
-    const updated = db.complaints.update(id, {
+    const updated = await db.complaints.update(id, {
       status: input.status ?? existing.status,
       timeline,
     });
-    activityLogger.record({
+    await activityLogger.record({
       actorId: actor.id,
       actorName: actor.name,
       action: "complaint.timeline",

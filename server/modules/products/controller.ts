@@ -13,20 +13,20 @@ export const productController = {
   async list(req: NextRequest) {
     requireAuth(req);
     const q = parseQuery(req, productListQuerySchema);
-    return ok(productService.list(q));
+    return ok(await productService.list(q));
   },
   async getById(req: NextRequest, id: string) {
     requireAuth(req);
-    return ok(productService.get(id));
+    return ok(await productService.get(id));
   },
   async create(req: NextRequest) {
-    const session = requireRole(req, "admin", "supervisor");
+    const session = requireRole(req, "supervisor");
     const input = await parseBody(req, productCreateSchema);
-    return created(productService.create(input, { id: session.sub, name: session.name }));
+    return created(await productService.create(input, { id: session.sub, name: session.name }));
   },
   async update(req: NextRequest, id: string) {
-    const session = requireRole(req, "admin", "supervisor");
+    const session = requireRole(req, "supervisor");
     const patch = await parseBody(req, productUpdateSchema);
-    return ok(productService.update(id, patch, { id: session.sub, name: session.name }));
+    return ok(await productService.update(id, patch, { id: session.sub, name: session.name }));
   },
 };

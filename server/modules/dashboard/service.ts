@@ -1,44 +1,45 @@
 import { activityLogger } from "../../core/logger";
-import { db } from "../../db/memory";
+import { db } from "../../db";
 import { leaderboardService } from "../leaderboard/service";
 
-/** Ringkasan untuk halaman Dashboard utama. Aggregator pure-read. */
+/** Aggregator pure-read untuk halaman Dashboard. */
 export const dashboardService = {
-  summary(salesId?: string) {
+  async summary(salesId?: string) {
     const today = new Date().toISOString().slice(0, 10);
     const monthPrefix = today.slice(0, 7);
 
-    const allVisits = db.visits.findAll();
-    const myVisits = allVisits.filter((v) => (salesId ? v.salesId === salesId : true));
+    const [allVisits, totalOutletActive, openComplaints, highPriorityComplaints, profile, ranking, recentActivity] =
+      await Promise.all([
+        db.visits.findAll(salesId ? { where: { sales_id: salesId } } : undefined),
+        db.outlets.count({ where: { status: "active" } }),
+        db.complaints.count({ in: { status: ["open", "in_progress"] } }),
+        db.complaints.count({
+          in: { status: ["open", "in_progress"] },
+          where: { priority: "high" },
+        }),
+        salesId ? db.userProfiles.findOne({ where: { user_id: salesId } }) : Promise.resolve(null),
+        leaderboardService.ranking({ period: "month" }),
+        activityLogger.list({ limit: 10 }),
+      ]);
 
-    const visitsToday = myVisits.filter((v) => v.visitDate === today);
-    const visitsThisMonth = myVisits.filter((v) => v.visitDate.startsWith(monthPrefix));
+    const visitsToday = allVisits.filter((v) => v.visitDate === today);
+    const visitsThisMonth = allVisits.filter((v) => v.visitDate.startsWith(monthPrefix));
     const salesThisMonth = visitsThisMonth
       .filter((v) => v.outcome === "order")
       .reduce((s, v) => s + v.orderValue, 0);
+    const target = profile?.monthlyTarget ?? 150_000_000;
 
-    const totalOutletActive = db.outlets.count((o) => o.status === "active");
-    const openComplaints = db.complaints.count((c) => c.status !== "resolved");
-    const highPriorityComplaints = db.complaints.count(
-      (c) => c.status !== "resolved" && c.priority === "high"
-    );
-
-    const me = salesId ? db.users.findById(salesId) : null;
-    const target = me?.monthlyTarget ?? 150_000_000;
-    const achievementPct = target > 0 ? (salesThisMonth / target) * 100 : 0;
-
-    // Performa harian 7 hari terakhir untuk chart
     const weekly: { day: string; actual: number; target: number }[] = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const ds = d.toISOString().slice(0, 10);
-      const sumDay = myVisits
+      const sumDay = allVisits
         .filter((v) => v.visitDate === ds && v.outcome === "order")
         .reduce((s, v) => s + v.orderValue, 0);
       weekly.push({
         day: ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"][d.getDay()],
-        actual: Math.round(sumDay / 1_000_000), // dalam juta
+        actual: Math.round(sumDay / 1_000_000),
         target: 20,
       });
     }
@@ -49,13 +50,13 @@ export const dashboardService = {
         visitsToday: visitsToday.length,
         salesThisMonth,
         targetThisMonth: target,
-        achievementPct,
+        achievementPct: target > 0 ? (salesThisMonth / target) * 100 : 0,
         openComplaints,
         highPriorityComplaints,
       },
       weeklyPerformance: weekly,
-      recentActivity: activityLogger.list({ limit: 10 }),
-      todayTopRanking: leaderboardService.ranking({ period: "month" }).slice(0, 3),
+      recentActivity,
+      todayTopRanking: ranking.slice(0, 3),
     };
   },
 };
