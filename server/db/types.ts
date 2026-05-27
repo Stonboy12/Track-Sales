@@ -9,7 +9,7 @@ export interface BaseEntity {
   updatedAt: string;
 }
 
-export type Role = "admin" | "supervisor" | "sales";
+export type Role = "admin" | "sales";
 
 export type Priority = "high" | "medium" | "low";
 export type OutletStatus = "active" | "pending" | "closed";
@@ -142,6 +142,21 @@ export interface Notification extends BaseEntity {
   body?: string;
   read: boolean;
   link?: string;
+}
+
+export interface Promo extends BaseEntity {
+  name: string;
+  description?: string;
+  productId?: string;
+  type: "discount" | "bundling" | "cashback" | "pwp";
+  discountPct: number;
+  bundlingQty: number;
+  cashbackAmount: number;
+  minQty: number;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
+  createdBy: string;
 }
 
 export interface UserSetting extends BaseEntity {

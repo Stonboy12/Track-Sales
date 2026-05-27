@@ -1,12 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Protected routes — redirect ke /login bila cookie session tidak ada.
+ * Protected routes.
  *
- * Kita SENGAJA tidak men-decode/verifikasi token di middleware
- * (Edge runtime tidak punya semua API Node yang kita pakai). Tugas verifikasi
- * tetap di route handler API kita lewat InsForge SDK. Middleware hanya
- * memastikan cookie ada — proteksi sebenarnya tetap dipegang server.
+ * Middleware **TIDAK** men-decode JWT (Edge runtime tidak punya semua API
+ * Node yang kita pakai). Tugas verifikasi tetap di route handler API. Di sini
+ * kita hanya:
+ *   1. Pastikan cookie session ada untuk halaman protected → kalau tidak
+ *      ada, redirect ke /login.
+ *   2. Lewatkan halaman publik dan asset.
+ *
+ * Cek role per-halaman (mis. /admin/*) dilakukan di server component / page
+ * lewat hook `requireSessionUser({ role: "admin" })`. Backend (semua API)
+ * juga punya `requireRole()` sebagai sumber kebenaran.
  */
 const SESSION_COOKIE = process.env.SESSION_COOKIE || "fmcg_session";
 
@@ -15,7 +21,6 @@ const PUBLIC_PATHS = ["/login", "/register"];
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Lewatkan asset, API, dan halaman publik.
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||

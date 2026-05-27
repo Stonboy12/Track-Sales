@@ -298,10 +298,12 @@ export const userSettingMapper: Mapper<UserSetting> = {
 export interface UserProfile {
   id: string;
   userId: string;
-  role: "admin" | "supervisor" | "sales";
+  role: "admin" | "sales";
   area?: string;
   phone?: string;
   monthlyTarget?: number;
+  teamId?: string;
+  isActive?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -315,6 +317,8 @@ export const userProfileMapper: Mapper<UserProfile> = {
     if (p.area !== undefined) r.area = p.area;
     if (p.phone !== undefined) r.phone = p.phone;
     if (p.monthlyTarget !== undefined) r.monthly_target = p.monthlyTarget;
+    if (p.teamId !== undefined) r.team_id = p.teamId;
+    if (p.isActive !== undefined) r.is_active = p.isActive;
     return r;
   },
   fromRow(r) {
@@ -325,6 +329,47 @@ export const userProfileMapper: Mapper<UserProfile> = {
       area: (r.area as string | null) ?? undefined,
       phone: (r.phone as string | null) ?? undefined,
       monthlyTarget: r.monthly_target ? Number(r.monthly_target) : undefined,
+      teamId: (r.team_id as string | null) ?? undefined,
+      isActive: r.is_active !== undefined ? Boolean(r.is_active) : true,
+      createdAt: toIso(r.created_at),
+      updatedAt: toIso(r.updated_at),
+    };
+  },
+};
+
+export const promoMapper: Mapper<import("./types").Promo> = {
+  table: "promos",
+  toRow(p) {
+    const r: Row = {};
+    if (p.name !== undefined) r.name = p.name;
+    if (p.description !== undefined) r.description = p.description;
+    if (p.productId !== undefined) r.product_id = p.productId ?? null;
+    if (p.type !== undefined) r.type = p.type;
+    if (p.discountPct !== undefined) r.discount_pct = p.discountPct;
+    if (p.bundlingQty !== undefined) r.bundling_qty = p.bundlingQty;
+    if (p.cashbackAmount !== undefined) r.cashback_amount = p.cashbackAmount;
+    if (p.minQty !== undefined) r.min_qty = p.minQty;
+    if (p.startsAt !== undefined) r.starts_at = p.startsAt;
+    if (p.endsAt !== undefined) r.ends_at = p.endsAt;
+    if (p.isActive !== undefined) r.is_active = p.isActive;
+    if (p.createdBy !== undefined) r.created_by = p.createdBy;
+    return r;
+  },
+  fromRow(r) {
+    return {
+      id: r.id as string,
+      name: r.name as string,
+      description: (r.description as string | null) ?? undefined,
+      productId: (r.product_id as string | null) ?? undefined,
+      type: r.type as import("./types").Promo["type"],
+      discountPct: Number(r.discount_pct ?? 0),
+      bundlingQty: Number(r.bundling_qty ?? 0),
+      cashbackAmount: Number(r.cashback_amount ?? 0),
+      minQty: Number(r.min_qty ?? 1),
+      startsAt: (r.starts_at as string).slice(0, 10),
+      endsAt: (r.ends_at as string).slice(0, 10),
+      isActive: Boolean(r.is_active ?? true),
+      createdBy: r.created_by as string,
       createdAt: toIso(r.created_at),
       updatedAt: toIso(r.updated_at),
     };

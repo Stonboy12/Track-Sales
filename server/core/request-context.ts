@@ -13,7 +13,7 @@ export interface RequestContext {
   userId?: string;
   userName?: string;
   userEmail?: string;
-  role?: "admin" | "supervisor" | "sales";
+  role?: "admin" | "sales";
   /** Lazily-created InsForge client untuk request ini. */
   client: InsForgeClient;
 }
