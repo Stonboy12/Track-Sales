@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ShieldCheck } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { SkuManager } from "./sku-manager";
+import { SeedButton } from "@/components/admin/seed-button";
 import type { Product } from "@/server/db/types";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function AdminSkusPage() {
       <PageHeader
         title="SKU Manager"
         description="Kelola katalog produk. Hanya admin yang dapat menambah atau mengubah SKU."
+        actions={<SeedButton />}
       />
 
       <Card className="border-primary/30 bg-primary/[0.03]">

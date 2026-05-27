@@ -11,6 +11,7 @@ import {
   Navigation,
   Clock,
   Phone,
+  Loader2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -32,8 +33,9 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { outlets, type Outlet, type Priority } from "@/lib/mock-data";
+import { api, ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import type { Outlet, Priority } from "@/server/db/types";
 
 const priorityVariant: Record<Priority, "destructive" | "warning" | "muted"> = {
   high: "destructive",
@@ -47,32 +49,74 @@ const priorityLabel: Record<Priority, string> = {
   low: "Rendah",
 };
 
+const ALL = "__all__";
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+interface OptimizeStop {
+  order: number;
+  outletId: string;
+  outletName: string;
+  area: string;
+  priority: Priority;
+}
+
 export default function RoutePlannerPage() {
+  const [outlets, setOutlets] = React.useState<Outlet[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [info, setInfo] = React.useState<string | null>(null);
+
   const [search, setSearch] = React.useState("");
-  const [areaFilter, setAreaFilter] = React.useState<string>("all");
-  const [priorityFilter, setPriorityFilter] = React.useState<string>("all");
-  const [statusFilter, setStatusFilter] = React.useState<string>("all");
-  const [route, setRoute] = React.useState<Outlet[]>(outlets.slice(0, 4));
+  const [areaFilter, setAreaFilter] = React.useState(ALL);
+  const [priorityFilter, setPriorityFilter] = React.useState(ALL);
+  const [statusFilter, setStatusFilter] = React.useState(ALL);
+
+  const [route, setRoute] = React.useState<Outlet[]>([]);
+  const [strategy, setStrategy] = React.useState<"priority" | "area" | "balanced">("priority");
+  const [optimizing, setOptimizing] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [routeName, setRouteName] = React.useState("");
+  const [routeDate, setRouteDate] = React.useState(todayStr());
+  const [estimate, setEstimate] = React.useState<{ minutes: number; km: number } | null>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const data = await api.get<Outlet[]>("/api/outlets", { query: { limit: 200 } });
+        setOutlets(data);
+        setRoute(data.slice(0, Math.min(4, data.length)));
+      } catch (e) {
+        setError(e instanceof ApiClientError ? e.message : "Gagal memuat outlet.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const areas = Array.from(new Set(outlets.map((o) => o.area)));
 
   const filtered = outlets.filter((o) => {
     if (search && !o.name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (areaFilter !== "all" && o.area !== areaFilter) return false;
-    if (priorityFilter !== "all" && o.priority !== priorityFilter) return false;
-    if (statusFilter !== "all" && o.status !== statusFilter) return false;
+    if (areaFilter !== ALL && o.area !== areaFilter) return false;
+    if (priorityFilter !== ALL && o.priority !== priorityFilter) return false;
+    if (statusFilter !== ALL && o.status !== statusFilter) return false;
     return true;
   });
 
-  const toggleOutlet = (outlet: Outlet) => {
+  function toggleOutlet(outlet: Outlet) {
     setRoute((prev) =>
       prev.find((p) => p.id === outlet.id)
         ? prev.filter((p) => p.id !== outlet.id)
         : [...prev, outlet]
     );
-  };
+    setEstimate(null); // estimasi lama tidak valid lagi
+  }
 
-  const moveItem = (idx: number, dir: -1 | 1) => {
+  function moveItem(idx: number, dir: -1 | 1) {
     setRoute((prev) => {
       const next = [...prev];
       const target = idx + dir;
@@ -80,18 +124,64 @@ export default function RoutePlannerPage() {
       [next[idx], next[target]] = [next[target], next[idx]];
       return next;
     });
-  };
+  }
 
-  const optimize = () => {
-    setRoute((prev) =>
-      [...prev].sort((a, b) => {
-        const order: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
-        return order[a.priority] - order[b.priority];
-      })
-    );
-  };
+  async function optimize() {
+    if (route.length === 0) {
+      setError("Pilih outlet dulu sebelum optimize.");
+      return;
+    }
+    setOptimizing(true);
+    setError(null);
+    try {
+      const result = await api.post<{
+        stops: OptimizeStop[];
+        estimatedDurationMin: number;
+        estimatedDistanceKm: number;
+      }>("/api/route-plans/optimize", {
+        outletIds: route.map((r) => r.id),
+        strategy,
+      });
+      // urutkan ulang berdasarkan response
+      const byId = new Map(route.map((r) => [r.id, r]));
+      const reordered = result.stops
+        .map((s) => byId.get(s.outletId))
+        .filter((o): o is Outlet => Boolean(o));
+      setRoute(reordered);
+      setEstimate({
+        minutes: result.estimatedDurationMin,
+        km: result.estimatedDistanceKm,
+      });
+      setInfo(`Rute dioptimasi (${strategy}). Estimasi ${result.estimatedDurationMin} menit, ${result.estimatedDistanceKm.toFixed(1)} km.`);
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Gagal optimize.");
+    } finally {
+      setOptimizing(false);
+    }
+  }
 
-  const totalDuration = route.length * 45; // 45 min per visit
+  async function saveRoute() {
+    if (route.length === 0) {
+      setError("Tidak ada stop untuk disimpan.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.post("/api/route-plans", {
+        name: routeName.trim() || `Rute ${routeDate}`,
+        date: routeDate,
+        outletIds: route.map((r) => r.id),
+      });
+      setInfo(`Rute disimpan: ${routeName.trim() || `Rute ${routeDate}`} (${route.length} stop).`);
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Gagal menyimpan rute.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const totalDuration = estimate?.minutes ?? route.length * 45;
 
   return (
     <div className="space-y-6">
@@ -100,26 +190,75 @@ export default function RoutePlannerPage() {
         description="Pilih outlet dan susun rute kunjungan paling efisien."
         actions={
           <>
-            <Button variant="outline" size="sm">
+            <Select value={strategy} onValueChange={(v) => setStrategy(v as typeof strategy)}>
+              <SelectTrigger className="h-9 w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="priority">Strategi: Prioritas</SelectItem>
+                <SelectItem value="area">Strategi: Area</SelectItem>
+                <SelectItem value="balanced">Strategi: Seimbang</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" disabled>
               <Download className="h-4 w-4" /> Export
             </Button>
-            <Button variant="outline" size="sm">
-              <Save className="h-4 w-4" /> Save Route
+            <Button variant="outline" size="sm" onClick={saveRoute} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Route
             </Button>
-            <Button size="sm" onClick={optimize}>
-              <Sparkles className="h-4 w-4" /> Optimize Route
+            <Button size="sm" onClick={optimize} disabled={optimizing}>
+              {optimizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              Optimize Route
             </Button>
           </>
         }
       />
 
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      {info && (
+        <div className="rounded-md border border-success/30 bg-success/10 p-3 text-sm text-success">
+          {info}
+        </div>
+      )}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Detail Rute</CardTitle>
+          <CardDescription>Beri nama dan tanggal untuk disimpan.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-3">
+          <Input
+            placeholder="Nama rute (opsional)"
+            value={routeName}
+            onChange={(e) => setRouteName(e.target.value)}
+          />
+          <Input
+            type="date"
+            value={routeDate}
+            onChange={(e) => setRouteDate(e.target.value)}
+          />
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Badge variant="secondary">{route.length} stop</Badge>
+            {estimate && (
+              <Badge variant="info" className="gap-1">
+                <Clock className="h-3 w-3" /> ± {estimate.minutes} min · {estimate.km.toFixed(1)} km
+              </Badge>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-3">
-        {/* Outlet list */}
         <Card className="lg:col-span-1">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Daftar Outlet</CardTitle>
             <CardDescription>
-              {filtered.length} outlet tersedia · {route.length} dipilih
+              {loading ? "memuat..." : `${filtered.length} tersedia · ${route.length} dipilih`}
             </CardDescription>
             <div className="space-y-2 pt-2">
               <div className="relative">
@@ -137,7 +276,7 @@ export default function RoutePlannerPage() {
                     <SelectValue placeholder="Area" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Semua Area</SelectItem>
+                    <SelectItem value={ALL}>Semua Area</SelectItem>
                     {areas.map((a) => (
                       <SelectItem key={a} value={a}>
                         {a}
@@ -150,7 +289,7 @@ export default function RoutePlannerPage() {
                     <SelectValue placeholder="Prioritas" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Semua</SelectItem>
+                    <SelectItem value={ALL}>Semua</SelectItem>
                     <SelectItem value="high">Tinggi</SelectItem>
                     <SelectItem value="medium">Sedang</SelectItem>
                     <SelectItem value="low">Rendah</SelectItem>
@@ -161,7 +300,7 @@ export default function RoutePlannerPage() {
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Semua</SelectItem>
+                    <SelectItem value={ALL}>Semua</SelectItem>
                     <SelectItem value="active">Aktif</SelectItem>
                     <SelectItem value="pending">Pending</SelectItem>
                     <SelectItem value="closed">Closed</SelectItem>
@@ -172,50 +311,61 @@ export default function RoutePlannerPage() {
           </CardHeader>
           <Separator />
           <ScrollArea className="h-[480px]">
-            <div className="divide-y">
-              {filtered.map((outlet) => {
-                const selected = !!route.find((r) => r.id === outlet.id);
-                return (
-                  <button
-                    key={outlet.id}
-                    onClick={() => toggleOutlet(outlet)}
-                    className={cn(
-                      "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40",
-                      selected && "bg-primary/5"
-                    )}
-                  >
-                    <div
+            {loading ? (
+              <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Memuat...
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">
+                {outlets.length === 0
+                  ? "Belum ada outlet. Minta admin seed data."
+                  : "Tidak ada outlet cocok dengan filter."}
+              </div>
+            ) : (
+              <div className="divide-y">
+                {filtered.map((outlet) => {
+                  const selected = !!route.find((r) => r.id === outlet.id);
+                  return (
+                    <button
+                      key={outlet.id}
+                      onClick={() => toggleOutlet(outlet)}
                       className={cn(
-                        "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-xs font-semibold",
-                        selected
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground"
+                        "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40",
+                        selected && "bg-primary/5"
                       )}
                     >
-                      {selected ? "✓" : outlet.segment}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{outlet.name}</p>
-                        <Badge
-                          variant={priorityVariant[outlet.priority]}
-                          className="shrink-0 text-[10px]"
-                        >
-                          {priorityLabel[outlet.priority]}
-                        </Badge>
+                      <div
+                        className={cn(
+                          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-xs font-semibold",
+                          selected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        {selected ? "✓" : outlet.segment}
                       </div>
-                      <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                        <MapPin className="h-3 w-3" /> {outlet.area}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium">{outlet.name}</p>
+                          <Badge
+                            variant={priorityVariant[outlet.priority]}
+                            className="shrink-0 text-[10px]"
+                          >
+                            {priorityLabel[outlet.priority]}
+                          </Badge>
+                        </div>
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="h-3 w-3" /> {outlet.area}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </ScrollArea>
         </Card>
 
-        {/* Map preview */}
         <Card className="lg:col-span-2">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -232,7 +382,6 @@ export default function RoutePlannerPage() {
           </CardHeader>
           <CardContent>
             <div className="relative aspect-[16/9] overflow-hidden rounded-lg border bg-gradient-to-br from-primary/5 via-muted/30 to-background">
-              {/* Decorative grid */}
               <div
                 className="absolute inset-0 opacity-30"
                 style={{
@@ -241,7 +390,6 @@ export default function RoutePlannerPage() {
                   backgroundSize: "40px 40px",
                 }}
               />
-              {/* Pins */}
               {route.slice(0, 6).map((stop, i) => (
                 <div
                   key={stop.id}
@@ -262,7 +410,7 @@ export default function RoutePlannerPage() {
               <div className="absolute bottom-3 left-3 rounded-md bg-background/95 px-3 py-2 text-xs shadow-md">
                 <p className="font-medium">Map Preview</p>
                 <p className="text-muted-foreground">
-                  Integrasi map akan tersedia setelah backend dihubungkan.
+                  Integrasi map provider akan tersedia kemudian.
                 </p>
               </div>
             </div>
@@ -270,14 +418,13 @@ export default function RoutePlannerPage() {
         </Card>
       </div>
 
-      {/* Route order */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">Urutan Rute Direkomendasikan</CardTitle>
+              <CardTitle className="text-base">Urutan Rute</CardTitle>
               <CardDescription>
-                Drag untuk mengurutkan, atau klik panah untuk memindahkan posisi.
+                Klik panah untuk mengurutkan, atau pakai Optimize Route untuk auto-sort.
               </CardDescription>
             </div>
             <Badge variant="secondary" className="gap-1">
@@ -336,11 +483,7 @@ export default function RoutePlannerPage() {
                     >
                       ↓
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => toggleOutlet(stop)}
-                    >
+                    <Button size="sm" variant="ghost" onClick={() => toggleOutlet(stop)}>
                       Hapus
                     </Button>
                   </div>

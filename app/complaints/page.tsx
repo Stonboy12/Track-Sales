@@ -7,9 +7,8 @@ import {
   Clock,
   CheckCircle2,
   Search,
-  Filter,
-  MessageSquare,
   Send,
+  Loader2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -49,22 +48,23 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import {
-  complaints,
-  outlets,
-  type Complaint,
-  type ComplaintStatus,
-  type Priority,
-} from "@/lib/mock-data";
+import { api, ApiClientError } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import type {
+  Complaint,
+  ComplaintCategory,
+  ComplaintStatus,
+  Outlet,
+  Priority,
+} from "@/server/db/types";
 
 const statusConfig: Record<
   ComplaintStatus,
-  { label: string; tone: string; variant: "warning" | "info" | "success" }
+  { label: string; variant: "warning" | "info" | "success" }
 > = {
-  open: { label: "Open", tone: "bg-warning/15 text-warning", variant: "warning" },
-  in_progress: { label: "In Progress", tone: "bg-primary/10 text-primary", variant: "info" },
-  resolved: { label: "Resolved", tone: "bg-success/15 text-success", variant: "success" },
+  open: { label: "Open", variant: "warning" },
+  in_progress: { label: "In Progress", variant: "info" },
+  resolved: { label: "Resolved", variant: "success" },
 };
 
 const priorityVariant: Record<Priority, "destructive" | "warning" | "muted"> = {
@@ -79,16 +79,85 @@ const priorityLabel: Record<Priority, string> = {
   low: "Rendah",
 };
 
-export default function ComplaintsPage() {
-  const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>("all");
-  const [selected, setSelected] = React.useState<Complaint | null>(null);
+const ALL = "__all__";
 
-  const filtered = complaints.filter((c) => {
-    if (statusFilter !== "all" && c.status !== statusFilter) return false;
+export default function ComplaintsPage() {
+  const [items, setItems] = React.useState<Complaint[]>([]);
+  const [outlets, setOutlets] = React.useState<Outlet[]>([]);
+  const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<string>(ALL);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [info, setInfo] = React.useState<string | null>(null);
+
+  // create form
+  const [open, setOpen] = React.useState(false);
+  const [fOutlet, setFOutlet] = React.useState("");
+  const [fProduct, setFProduct] = React.useState("");
+  const [fCategory, setFCategory] = React.useState<ComplaintCategory>("kualitas");
+  const [fPriority, setFPriority] = React.useState<Priority>("medium");
+  const [fDescription, setFDescription] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const [c, o] = await Promise.all([
+          api.get<Complaint[]>("/api/complaints"),
+          api.get<Outlet[]>("/api/outlets"),
+        ]);
+        setItems(c);
+        setOutlets(o);
+      } catch (e) {
+        setError(e instanceof ApiClientError ? e.message : "Gagal memuat data.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  async function refresh() {
+    const data = await api.get<Complaint[]>("/api/complaints");
+    setItems(data);
+  }
+
+  async function createComplaint() {
+    if (!fOutlet || !fProduct || !fDescription) {
+      setError("Lengkapi outlet, produk, dan deskripsi.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await api.post<Complaint>("/api/complaints", {
+        outletId: fOutlet,
+        productName: fProduct.trim(),
+        category: fCategory,
+        priority: fPriority,
+        description: fDescription.trim(),
+      });
+      setInfo(`Komplain ${created.code} tersimpan.`);
+      setOpen(false);
+      // reset
+      setFOutlet("");
+      setFProduct("");
+      setFCategory("kualitas");
+      setFPriority("medium");
+      setFDescription("");
+      await refresh();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Gagal menyimpan komplain.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const filtered = items.filter((c) => {
+    if (statusFilter !== ALL && c.status !== statusFilter) return false;
     if (
       search &&
-      !`${c.outlet} ${c.product} ${c.code}`
+      !`${c.outletName} ${c.productName} ${c.code}`
         .toLowerCase()
         .includes(search.toLowerCase())
     )
@@ -97,9 +166,9 @@ export default function ComplaintsPage() {
   });
 
   const counts = {
-    open: complaints.filter((c) => c.status === "open").length,
-    in_progress: complaints.filter((c) => c.status === "in_progress").length,
-    resolved: complaints.filter((c) => c.status === "resolved").length,
+    open: items.filter((c) => c.status === "open").length,
+    in_progress: items.filter((c) => c.status === "in_progress").length,
+    resolved: items.filter((c) => c.status === "resolved").length,
   };
 
   return (
@@ -108,7 +177,7 @@ export default function ComplaintsPage() {
         title="Complaint Tracker"
         description="Catat, pantau, dan selesaikan komplain pelanggan dengan cepat."
         actions={
-          <Dialog>
+          <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
                 <Plus className="h-4 w-4" /> Komplain Baru
@@ -124,13 +193,13 @@ export default function ComplaintsPage() {
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label>Outlet</Label>
-                  <Select>
+                  <Select value={fOutlet} onValueChange={setFOutlet}>
                     <SelectTrigger>
                       <SelectValue placeholder="Pilih outlet" />
                     </SelectTrigger>
                     <SelectContent>
                       {outlets.map((o) => (
-                        <SelectItem key={o.id} value={o.name}>
+                        <SelectItem key={o.id} value={o.id}>
                           {o.name}
                         </SelectItem>
                       ))}
@@ -140,7 +209,10 @@ export default function ComplaintsPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Kategori</Label>
-                    <Select defaultValue="kualitas">
+                    <Select
+                      value={fCategory}
+                      onValueChange={(v) => setFCategory(v as ComplaintCategory)}
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -154,7 +226,10 @@ export default function ComplaintsPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Prioritas</Label>
-                    <Select defaultValue="medium">
+                    <Select
+                      value={fPriority}
+                      onValueChange={(v) => setFPriority(v as Priority)}
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -168,41 +243,54 @@ export default function ComplaintsPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Produk Terkait</Label>
-                  <Input placeholder="Misal: Susu UHT 250ml" />
+                  <Input
+                    value={fProduct}
+                    onChange={(e) => setFProduct(e.target.value)}
+                    placeholder="Misal: Susu UHT 250ml"
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Deskripsi</Label>
-                  <Textarea rows={4} placeholder="Jelaskan komplain dari outlet..." />
+                  <Textarea
+                    rows={4}
+                    value={fDescription}
+                    onChange={(e) => setFDescription(e.target.value)}
+                    placeholder="Jelaskan komplain dari outlet..."
+                  />
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline">Batal</Button>
-                <Button>Simpan Komplain</Button>
+                <Button variant="outline" onClick={() => setOpen(false)}>
+                  Batal
+                </Button>
+                <Button onClick={createComplaint} disabled={submitting}>
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Simpan Komplain"
+                  )}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         }
       />
 
+      {error && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      {info && (
+        <div className="rounded-md border border-success/30 bg-success/10 p-3 text-sm text-success">
+          {info}
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatusCard
-          label="Open"
-          count={counts.open}
-          icon={AlertOctagon}
-          tone="bg-warning/15 text-warning"
-        />
-        <StatusCard
-          label="In Progress"
-          count={counts.in_progress}
-          icon={Clock}
-          tone="bg-primary/10 text-primary"
-        />
-        <StatusCard
-          label="Resolved"
-          count={counts.resolved}
-          icon={CheckCircle2}
-          tone="bg-success/15 text-success"
-        />
+        <StatusCard label="Open" count={counts.open} icon={AlertOctagon} tone="bg-warning/15 text-warning" />
+        <StatusCard label="In Progress" count={counts.in_progress} icon={Clock} tone="bg-primary/10 text-primary" />
+        <StatusCard label="Resolved" count={counts.resolved} icon={CheckCircle2} tone="bg-success/15 text-success" />
       </div>
 
       <Card>
@@ -210,7 +298,9 @@ export default function ComplaintsPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle className="text-base">Daftar Komplain</CardTitle>
-              <CardDescription>{filtered.length} komplain</CardDescription>
+              <CardDescription>
+                {loading ? "memuat..." : `${filtered.length} komplain`}
+              </CardDescription>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <div className="relative">
@@ -227,7 +317,7 @@ export default function ComplaintsPage() {
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Semua Status</SelectItem>
+                  <SelectItem value={ALL}>Semua Status</SelectItem>
                   <SelectItem value="open">Open</SelectItem>
                   <SelectItem value="in_progress">In Progress</SelectItem>
                   <SelectItem value="resolved">Resolved</SelectItem>
@@ -237,46 +327,52 @@ export default function ComplaintsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {filtered.length === 0 && (
-            <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-              Tidak ada komplain pada filter ini. 🎉
+          {loading ? (
+            <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Memuat...
             </div>
-          )}
-          {filtered.map((c) => (
-            <Sheet key={c.id}>
-              <SheetTrigger asChild>
-                <button
-                  onClick={() => setSelected(c)}
-                  className="w-full rounded-lg border bg-background p-4 text-left transition-colors hover:bg-muted/40"
-                >
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="font-mono text-xs text-muted-foreground">{c.code}</p>
-                        <Badge variant={statusConfig[c.status].variant}>
-                          {statusConfig[c.status].label}
-                        </Badge>
-                        <Badge variant={priorityVariant[c.priority]} className="text-[10px]">
-                          {priorityLabel[c.priority]}
-                        </Badge>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+              {items.length === 0
+                ? "Belum ada komplain. 🎉 Tetap pantau outlet rutin."
+                : "Tidak ada komplain pada filter ini."}
+            </div>
+          ) : (
+            filtered.map((c) => (
+              <Sheet key={c.id}>
+                <SheetTrigger asChild>
+                  <button className="w-full rounded-lg border bg-background p-4 text-left transition-colors hover:bg-muted/40">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-mono text-xs text-muted-foreground">{c.code}</p>
+                          <Badge variant={statusConfig[c.status].variant}>
+                            {statusConfig[c.status].label}
+                          </Badge>
+                          <Badge variant={priorityVariant[c.priority]} className="text-[10px]">
+                            {priorityLabel[c.priority]}
+                          </Badge>
+                        </div>
+                        <p className="mt-1.5 truncate text-sm font-medium">{c.outletName}</p>
+                        <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                          {c.productName} · {c.description}
+                        </p>
                       </div>
-                      <p className="mt-1.5 truncate text-sm font-medium">{c.outlet}</p>
-                      <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                        {c.product} · {c.description}
-                      </p>
+                      <div className="flex items-center gap-3 md:flex-col md:items-end">
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(c.createdAt).toLocaleString("id-ID")}
+                        </p>
+                        <p className="text-xs font-medium">{c.reportedByName}</p>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3 md:flex-col md:items-end">
-                      <p className="text-xs text-muted-foreground">{c.createdAt}</p>
-                      <p className="text-xs font-medium">{c.reportedBy}</p>
-                    </div>
-                  </div>
-                </button>
-              </SheetTrigger>
-              <SheetContent className="w-full sm:max-w-lg">
-                <ComplaintDetail complaint={c} />
-              </SheetContent>
-            </Sheet>
-          ))}
+                  </button>
+                </SheetTrigger>
+                <SheetContent className="w-full sm:max-w-lg">
+                  <ComplaintDetail complaint={c} onUpdated={refresh} />
+                </SheetContent>
+              </Sheet>
+            ))
+          )}
         </CardContent>
       </Card>
     </div>
@@ -309,7 +405,39 @@ function StatusCard({
   );
 }
 
-function ComplaintDetail({ complaint }: { complaint: Complaint }) {
+function ComplaintDetail({
+  complaint,
+  onUpdated,
+}: {
+  complaint: Complaint;
+  onUpdated: () => Promise<void>;
+}) {
+  const [note, setNote] = React.useState("");
+  const [status, setStatus] = React.useState<ComplaintStatus>(complaint.status);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function submit() {
+    if (!note.trim()) {
+      setError("Tulis catatan update terlebih dahulu.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.post(`/api/complaints/${complaint.id}/timeline`, {
+        note: note.trim(),
+        status,
+      });
+      setNote("");
+      await onUpdated();
+    } catch (e) {
+      setError(e instanceof ApiClientError ? e.message : "Gagal mengirim update.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="space-y-5">
       <SheetHeader>
@@ -322,15 +450,17 @@ function ComplaintDetail({ complaint }: { complaint: Complaint }) {
           </Badge>
         </div>
         <SheetTitle className="text-xl">{complaint.code}</SheetTitle>
-        <SheetDescription>{complaint.createdAt}</SheetDescription>
+        <SheetDescription>
+          {new Date(complaint.createdAt).toLocaleString("id-ID")}
+        </SheetDescription>
       </SheetHeader>
 
       <div className="space-y-3 rounded-lg border bg-muted/30 p-4 text-sm">
-        <Field label="Outlet" value={complaint.outlet} />
+        <Field label="Outlet" value={complaint.outletName} />
         <Field label="Area" value={complaint.area} />
-        <Field label="Produk" value={complaint.product} />
+        <Field label="Produk" value={complaint.productName} />
         <Field label="Kategori" value={complaint.category} className="capitalize" />
-        <Field label="Dilaporkan oleh" value={complaint.reportedBy} />
+        <Field label="Dilaporkan oleh" value={complaint.reportedByName} />
       </div>
 
       <div>
@@ -349,9 +479,11 @@ function ComplaintDetail({ complaint }: { complaint: Complaint }) {
           {complaint.timeline.map((t, i) => (
             <li key={i} className="relative">
               <span className="absolute -left-[26px] top-0.5 flex h-3 w-3 rounded-full bg-primary ring-4 ring-primary/15" />
-              <p className="text-xs text-muted-foreground">{t.time}</p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(t.at).toLocaleString("id-ID")}
+              </p>
               <p className="text-sm">
-                <span className="font-medium">{t.actor}</span>{" "}
+                <span className="font-medium">{t.actorName}</span>{" "}
                 <span className="text-muted-foreground">— {t.note}</span>
               </p>
             </li>
@@ -363,9 +495,19 @@ function ComplaintDetail({ complaint }: { complaint: Complaint }) {
 
       <div className="space-y-2">
         <p className="text-sm font-semibold">Tambah Update</p>
-        <Textarea rows={3} placeholder="Tulis progress atau tindakan terbaru..." />
+        <Textarea
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Tulis progress atau tindakan terbaru..."
+        />
+        {error && (
+          <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Select defaultValue={complaint.status}>
+          <Select value={status} onValueChange={(v) => setStatus(v as ComplaintStatus)}>
             <SelectTrigger className="w-40">
               <SelectValue />
             </SelectTrigger>
@@ -375,8 +517,8 @@ function ComplaintDetail({ complaint }: { complaint: Complaint }) {
               <SelectItem value="resolved">Resolved</SelectItem>
             </SelectContent>
           </Select>
-          <Button size="sm">
-            <Send className="h-4 w-4" /> Kirim Update
+          <Button size="sm" onClick={submit} disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Send className="h-4 w-4" /> Kirim Update</>}
           </Button>
         </div>
       </div>
