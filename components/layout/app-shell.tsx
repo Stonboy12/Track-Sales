@@ -1,8 +1,18 @@
+"use client";
+
 import * as React from "react";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 
+const BARE_PATHS = ["/login", "/register"];
+
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  // Halaman publik (login/register) tampil tanpa sidebar/topbar.
+  if (BARE_PATHS.includes(pathname)) {
+    return <>{children}</>;
+  }
   return (
     <div className="flex h-svh w-full bg-muted/30">
       <Sidebar className="hidden lg:flex" />
