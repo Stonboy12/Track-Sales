@@ -6,6 +6,7 @@ export const complaintCreateSchema = z.object({
   category: z.enum(["kualitas", "pengiriman", "harga", "lainnya"]),
   priority: z.enum(["high", "medium", "low"]).default("medium"),
   description: z.string().min(5).max(4000),
+  attachmentUrls: z.array(z.string().url()).max(10).optional(),
 });
 export type ComplaintCreateInput = z.infer<typeof complaintCreateSchema>;
 

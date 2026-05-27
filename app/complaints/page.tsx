@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { api, ApiClientError } from "@/lib/api-client";
+import { insforge } from "@/lib/insforge";
 import { cn } from "@/lib/utils";
 import type {
   Complaint,
@@ -97,6 +98,8 @@ export default function ComplaintsPage() {
   const [fCategory, setFCategory] = React.useState<ComplaintCategory>("kualitas");
   const [fPriority, setFPriority] = React.useState<Priority>("medium");
   const [fDescription, setFDescription] = React.useState("");
+  const [fAttachments, setFAttachments] = React.useState<string[]>([]);
+  const [uploading, setUploading] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
 
   React.useEffect(() => {
@@ -136,8 +139,9 @@ export default function ComplaintsPage() {
         category: fCategory,
         priority: fPriority,
         description: fDescription.trim(),
+        attachmentUrls: fAttachments,
       });
-      setInfo(`Komplain ${created.code} tersimpan.`);
+      setInfo(`Komplain ${created.code} tersimpan${fAttachments.length ? ` (${fAttachments.length} foto)` : ""}.`);
       setOpen(false);
       // reset
       setFOutlet("");
@@ -145,6 +149,7 @@ export default function ComplaintsPage() {
       setFCategory("kualitas");
       setFPriority("medium");
       setFDescription("");
+      setFAttachments([]);
       await refresh();
     } catch (e) {
       setError(e instanceof ApiClientError ? e.message : "Gagal menyimpan komplain.");
@@ -257,6 +262,70 @@ export default function ComplaintsPage() {
                     onChange={(e) => setFDescription(e.target.value)}
                     placeholder="Jelaskan komplain dari outlet..."
                   />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Foto bukti (opsional, max 10)</Label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={uploading || fAttachments.length >= 10}
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      e.currentTarget.value = "";
+                      if (!files.length) return;
+                      setUploading(true);
+                      setError(null);
+                      try {
+                        const remaining = 10 - fAttachments.length;
+                        const uploads = await Promise.all(
+                          files.slice(0, remaining).map((f) =>
+                            insforge.storage.from("attachments").uploadAuto(f)
+                          )
+                        );
+                        const urls = uploads
+                          .map((u) => u.data?.url)
+                          .filter((u): u is string => Boolean(u));
+                        if (urls.length === 0) {
+                          throw new Error("Upload gagal — server tidak mengembalikan URL.");
+                        }
+                        setFAttachments((prev) => [...prev, ...urls]);
+                      } catch (err) {
+                        setError(
+                          err instanceof Error ? err.message : "Upload foto gagal."
+                        );
+                      } finally {
+                        setUploading(false);
+                      }
+                    }}
+                    className="block w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-secondary-foreground hover:file:bg-secondary/80"
+                  />
+                  {(uploading || fAttachments.length > 0) && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {uploading && (
+                        <span className="inline-flex items-center gap-1 rounded-md border bg-muted px-2 py-1 text-xs">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Upload...
+                        </span>
+                      )}
+                      {fAttachments.map((url, i) => (
+                        <div
+                          key={url}
+                          className="relative h-14 w-14 overflow-hidden rounded-md border bg-muted"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`foto ${i + 1}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setFAttachments((prev) => prev.filter((u) => u !== url))}
+                            className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-background/90 text-destructive hover:bg-background"
+                            title="Hapus"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <DialogFooter>
@@ -469,6 +538,28 @@ function ComplaintDetail({
           {complaint.description}
         </p>
       </div>
+
+      {complaint.attachmentUrls && complaint.attachmentUrls.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-sm font-semibold">
+            Foto Bukti ({complaint.attachmentUrls.length})
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            {complaint.attachmentUrls.map((url, i) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block aspect-square overflow-hidden rounded-md border bg-muted hover:opacity-90"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={`foto ${i + 1}`} className="h-full w-full object-cover" />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="mb-2 flex items-center justify-between">

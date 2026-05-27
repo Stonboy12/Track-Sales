@@ -50,6 +50,7 @@ interface VisitEntry {
 interface GenerateResp {
   summary: { total: number; success: number; orderTotal: number };
   generatedText: string;
+  provider?: "template" | "openrouter";
 }
 
 interface MeResp {
@@ -354,7 +355,8 @@ export default function DailyReportPage() {
                 </div>
                 {generated && (
                   <Badge variant="success" className="gap-1">
-                    <CheckCircle2 className="h-3 w-3" /> Generated
+                    <CheckCircle2 className="h-3 w-3" />{" "}
+                    {generated.provider === "openrouter" ? "AI Generated" : "Generated"}
                   </Badge>
                 )}
               </div>

@@ -70,9 +70,13 @@ export const complaintService = {
           at: new Date().toISOString(),
           actorId: actor.id,
           actorName: actor.name,
-          note: "Komplain dibuat",
+          note:
+            input.attachmentUrls && input.attachmentUrls.length > 0
+              ? `Komplain dibuat (${input.attachmentUrls.length} foto)`
+              : "Komplain dibuat",
         },
       ],
+      attachmentUrls: input.attachmentUrls ?? [],
     });
     await activityLogger.record({
       actorId: actor.id,
